@@ -12,6 +12,10 @@ category:            Development
 build-type:          Simple
 cabal-version:       >=1.10
 
+source-repository head
+  type:                git
+  location:            git://github.com/bgamari/cabal-ghc-dynflags
+
 library
   exposed-modules:     GHC.Cabal
   build-depends:       base >=4.8 && <4.9,
