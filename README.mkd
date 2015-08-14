@@ -1,0 +1,16 @@
+# cabal-ghc-dynflags — GHC API for Cabal packges 
+
+This package is intended for use by developers of
+[Haskell](http://www.haskell.org) tooling built against the
+[GHC](http://ghc.haskell.org/) API. One major hurtle when using the API is
+configuring GHC's dynamic flags (`DynFlags`), especially when running against
+code usually built by `Cabal`.
+
+This library handles `DynFlags` configuration, using the `Cabal` library to
+determine how Cabal would have invoked GHC and configuring `DynFlags`
+appropriately.
+
+See the Haddock documentation in `GHC.Cabal` for details.
+
+Note that it is still necessary to run `cabal build` in a Cabal project tree
+before `cagal-ghc-dynflags` will be able to successfully run.
