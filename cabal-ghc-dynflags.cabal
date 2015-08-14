@@ -1,7 +1,7 @@
 name:                cabal-ghc-dynflags
 version:             0.1.0.0
-synopsis:            Conveniently configure GHC API for use with Cabal projects
--- description:         
+synopsis:            Conveniently configure GHC's dynamic flags for use with Cabal projects
+description:         See Haddocks in 'GHC.Cabal' for details.
 homepage:            http://github.com/bgamari/cabal-ghc-dynflags
 license:             BSD3
 license-file:        LICENSE
