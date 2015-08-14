@@ -4,19 +4,20 @@
 -- allowing seamless tooling use on Cabal projects.
 --
 -- A typical usage might look like,
--- @
--- import GHC
--- import qualified GHC.Paths
--- import qualified Distribution.Verbosity as Verbosity
 --
--- main = runGhc (Just GHC.Paths.libdir) $ do
---     dflags <- GHC.getSessionDynFlags
---     -- Use default DynFlags if we aren't in a Cabal project
---     dflags' <- fromMaybe dflags <$> liftIO (initCabalDynFlags Verbosity.normal dflags)
---     GHC.setSessionDynFlags dflags'
+-- > import GHC
+-- > import qualified GHC.Paths
+-- > import qualified Distribution.Verbosity as Verbosity
+-- > import GHC.Cabal
+-- >
+-- > main = runGhc (Just GHC.Paths.libdir) $ do
+-- >     dflags <- GHC.getSessionDynFlags
+-- >     -- Use default DynFlags if we aren't in a Cabal project
+-- >     dflags' <- fromMaybe dflags <$> liftIO (initCabalDynFlags Verbosity.normal dflags)
+-- >     GHC.setSessionDynFlags dflags'
+-- >
+-- >     -- Standard GHC API usage goes here
 --
---     -- Standard GHC API usage goes here
--- @
 
 module GHC.Cabal (
       -- * Initializing GHC DynFlags for Cabal packages
