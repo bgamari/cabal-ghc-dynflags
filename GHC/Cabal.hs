@@ -40,11 +40,13 @@ module GHC.Cabal (
 import Control.Monad (guard, msum, mzero)
 import Control.Monad.Trans.Maybe (MaybeT, runMaybeT)
 import Control.Monad.Trans.Class
+import Data.Maybe (listToMaybe)
 
 import Control.Applicative ((<|>))
 import Distribution.Verbosity
 import Distribution.Simple.Utils (defaultPackageDesc, warn, debug, findPackageDesc)
 import Distribution.Simple.Program (defaultProgramConfiguration)
+import qualified Distribution.Simple.BuildTarget as BuildTarget
 import qualified Distribution.Simple.Setup as Setup
 import Distribution.PackageDescription as PD
 import Distribution.PackageDescription.Parse as PD
@@ -67,7 +69,7 @@ data CabalDetails = CabalDetails
       -- | The 'LocalBuildInfo' being use to configure GHC
     , cdLocalBuildInfo          :: LocalBuildInfo
       -- | The name of the component being used
-    , cdComponentName           :: ComponentName
+    , cdComponent               :: Component
       -- | The 'ComponentLocalBuildInfo' of the Cabal 'Component' being use to configure GHC
     , cdComponentLocalBuildInfo :: ComponentLocalBuildInfo
       -- | The GHC targets representing the sources of the current component.
@@ -98,39 +100,37 @@ initCabalDynFlags verbosity dflags0 = runMaybeT $ do
                         Right (pd,_) -> pd
                         -- This shouldn't happen since we claim dependencies can always be satisfied
                         Left err     -> error "missing dependencies"
-    let comp :: Maybe (PD.BuildInfo, ComponentName, [GHC.Target])
-        comp = msum [libraryComp, executableComp]
-
-        libraryComp = do
-            lib <- PD.library pkg_descr
-            let compName = CLibName
-                bi = PD.libBuildInfo lib
-            guard $ PD.buildable bi
-            let targets = map (\m -> GHC.Target (GHC.TargetModule $ toGhcModName m) False Nothing)
-                              (PD.exposedModules lib)
-            return (bi, compName, targets)
-
-        executableComp = msum $ flip map (PD.executables pkg_descr) $ \exec->do
-            let compName = LBI.CExeName $ PD.exeName exec
-                bi = PD.buildInfo exec
-            guard $ PD.buildable bi
-            let targets = [GHC.Target (GHC.TargetFile (PD.modulePath exec) Nothing) False Nothing]
-            return (bi, compName, targets)
 
     let warnNoComps = do
             lift $ warn verbosity $ "Found no buildable components in "++pdfile
             mzero
-    (bi, compName, targets) <- maybe warnNoComps pure comp
-    let clbi = getComponentLocalBuildInfo lbi compName
+    comp <- maybe warnNoComps pure $ listToMaybe $ LBI.pkgEnabledComponents pkg_descr
+    let bi = LBI.componentBuildInfo comp
+        compName = LBI.componentName comp
+        clbi = getComponentLocalBuildInfo lbi compName
+        targets = componentTargets comp
 
     dflags <- lift $ initBuildInfoDynFlags verbosity lbi bi clbi dflags0
     let cd = CabalDetails { cdPackageDescription      = pkg_descr
                           , cdLocalBuildInfo          = lbi
-                          , cdComponentName           = compName
+                          , cdComponent               = comp
                           , cdComponentLocalBuildInfo = clbi
                           , cdTargets                 = targets
                           }
     return (dflags, cd)
+
+-- | The GHC targets associated with a 'Component'.
+componentTargets :: Component -> [GHC.Target]
+componentTargets (CLib lib) = map targetFromModule (PD.libModules lib)
+componentTargets (CExe exe) =
+  targetFromSource (PD.modulePath exe) : map targetFromModule (exeModules exe)
+componentTargets _ = [] -- potentially TODO
+
+targetFromModule :: Distribution.ModuleName.ModuleName -> GHC.Target
+targetFromModule m = GHC.Target (GHC.TargetModule $ toGhcModName m) False Nothing
+
+targetFromSource :: FilePath -> GHC.Target
+targetFromSource f = GHC.Target (GHC.TargetFile f Nothing) False Nothing
 
 toGhcModName :: Distribution.ModuleName.ModuleName -> GHC.ModuleName
 toGhcModName = GHC.mkModuleName . display
