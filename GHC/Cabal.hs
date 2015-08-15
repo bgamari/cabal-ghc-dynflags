@@ -20,21 +20,23 @@
 --
 -- In addition to the 'DynFlags', 'initCabalDynFlags' also offers a variety of
 -- information about the current project in the form of 'CabalDetails'. Perhaps
--- the most useful information offered is 'cdTargets', which lists the source files
--- of the currently selected Cabal component.
+-- the most useful information offered is 'cdComponent', which can be used in
+-- conjunction with 'componentTargets' to generate the GHC 'Target's
+-- defined by the component.
 --
--- For instance, to automatically bring project's module's into 
+-- For instance, to automatically bring project's modules into scope,
 --
 -- > (dflags', cd) <- maybe (dflags, Nothing) (\(a,b)->(a, Just b))
 -- >                  <$> liftIO (initCabalDynFlags (verbose args) dflags)
 -- > GHC.setSessionDynFlags dflags'
--- > traverse (GHC.setTargets . cdTargets) cd
+-- > traverse (GHC.setTargets . componentTargets . cdComponent) cd
 --
 
 module GHC.Cabal (
       -- * Initializing GHC DynFlags for Cabal packages
       initCabalDynFlags
     , CabalDetails(..)
+    , componentTargets
     ) where
 
 import Control.Monad (guard, msum, mzero)
@@ -72,12 +74,6 @@ data CabalDetails = CabalDetails
     , cdComponent               :: Component
       -- | The 'ComponentLocalBuildInfo' of the Cabal 'Component' being use to configure GHC
     , cdComponentLocalBuildInfo :: ComponentLocalBuildInfo
-      -- | The GHC targets representing the sources of the current component.
-      -- What this means depends upon what type of component has been selected:
-      --
-      --    * library: libraries these are the library's exposed modules
-      --    * executable: the source of the executable's @Main@ source file
-    , cdTargets                 :: [GHC.Target]
     }
 
 -- | Modify a set of 'DynFlags' to match what Cabal would produce.
@@ -108,18 +104,16 @@ initCabalDynFlags verbosity dflags0 = runMaybeT $ do
     let bi = LBI.componentBuildInfo comp
         compName = LBI.componentName comp
         clbi = getComponentLocalBuildInfo lbi compName
-        targets = componentTargets comp
 
     dflags <- lift $ initBuildInfoDynFlags verbosity lbi bi clbi dflags0
     let cd = CabalDetails { cdPackageDescription      = pkg_descr
                           , cdLocalBuildInfo          = lbi
                           , cdComponent               = comp
                           , cdComponentLocalBuildInfo = clbi
-                          , cdTargets                 = targets
                           }
     return (dflags, cd)
 
--- | The GHC targets associated with a 'Component'.
+-- | The GHC targets associated with a Cabal 'Component'.
 componentTargets :: Component -> [GHC.Target]
 componentTargets (CLib lib) = map targetFromModule (PD.libModules lib)
 componentTargets (CExe exe) =
