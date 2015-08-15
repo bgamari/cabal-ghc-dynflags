@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 -- | One of the challenges of using the GHC API for external tooling
 -- is handling integration with Cabal. This library provides a simple
 -- interface for configuring GHC's 'DynFlags' as Cabal would have,
@@ -79,8 +80,12 @@ data CabalDetails = CabalDetails
 -- | Modify a set of 'DynFlags' to match what Cabal would produce.
 initCabalDynFlags :: Verbosity -> DynFlags -> IO (Maybe (DynFlags, CabalDetails))
 initCabalDynFlags verbosity dflags0 = runMaybeT $ do
+#if MIN_VERSION_Cabal(1,20,0)
     let warnNoCabal _err = lift (warn verbosity "Couldn't find cabal file") >> mzero
-    pdfile <- either warnNoCabal pure =<< lift (findPackageDesc ".")
+    pdfile <- either warnNoCabal return =<< lift (findPackageDesc ".")
+#else
+    pdfile <- lift (findPackageDesc ".")
+#endif
     gpkg_descr <- lift $ PD.readPackageDescription verbosity pdfile
     lbi <- lift $ Configure.getPersistBuildConfig Setup.defaultDistPref
 
@@ -91,8 +96,17 @@ initCabalDynFlags verbosity dflags0 = runMaybeT $ do
 
     -- TODO: is any of this correct?
     let pkg_descr = case finalizePackageDescription
-                             [] (const True) compPlatform (Compiler.compilerInfo comp)
-                             [] gpkg_descr of
+                             []
+                             (const True)
+                             compPlatform
+#if MIN_VERSION_Cabal(1,22,0)
+                             (Compiler.compilerInfo comp)
+#else
+                             (Compiler.compilerId comp)
+#endif
+                             []
+                             gpkg_descr
+                             of
                         Right (pd,_) -> pd
                         -- This shouldn't happen since we claim dependencies can always be satisfied
                         Left err     -> error "missing dependencies"
@@ -100,7 +114,7 @@ initCabalDynFlags verbosity dflags0 = runMaybeT $ do
     let warnNoComps = do
             lift $ warn verbosity $ "Found no buildable components in "++pdfile
             mzero
-    comp <- maybe warnNoComps pure $ listToMaybe $ LBI.pkgEnabledComponents pkg_descr
+    comp <- maybe warnNoComps return $ listToMaybe $ LBI.pkgEnabledComponents pkg_descr
     let bi = LBI.componentBuildInfo comp
         compName = LBI.componentName comp
         clbi = getComponentLocalBuildInfo lbi compName
@@ -139,4 +153,8 @@ initBuildInfoDynFlags verbosity lbi bi clbi dflags0 = do
     return dflags
   where
     baseOpts = CGHC.componentGhcOptions verbosity lbi bi clbi (buildDir lbi)
+#if MIN_VERSION_Cabal(1,20,0)
     rendered = CGHC.renderGhcOptions (LBI.compiler lbi) baseOpts
+#else
+    rendered = CGHC.renderGhcOptions (Compiler.compilerVersion (LBI.compiler lbi)) baseOpts  
+#endif
