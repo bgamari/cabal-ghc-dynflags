@@ -43,7 +43,7 @@ module GHC.Cabal (
 import Control.Monad (guard, msum, mzero)
 import Control.Monad.Trans.Maybe (MaybeT, runMaybeT)
 import Control.Monad.Trans.Class
-import Data.Maybe (listToMaybe)
+import Data.Maybe (listToMaybe, fromMaybe)
 
 import Control.Applicative ((<|>))
 import Distribution.Verbosity
@@ -78,8 +78,11 @@ data CabalDetails = CabalDetails
     }
 
 -- | Modify a set of 'DynFlags' to match what Cabal would produce.
-initCabalDynFlags :: Verbosity -> DynFlags -> IO (Maybe (DynFlags, CabalDetails))
-initCabalDynFlags verbosity dflags0 = runMaybeT $ do
+initCabalDynFlags :: Verbosity
+                  -> Maybe FilePath -- ^ dist/ prefix (if overriding)
+                  -> DynFlags
+                  -> IO (Maybe (DynFlags, CabalDetails))
+initCabalDynFlags verbosity distPref dflags0 = runMaybeT $ do
 #if MIN_VERSION_Cabal(1,20,0)
     let warnNoCabal _err = lift (warn verbosity "Couldn't find cabal file") >> mzero
     pdfile <- either warnNoCabal return =<< lift (findPackageDesc ".")
@@ -87,7 +90,7 @@ initCabalDynFlags verbosity dflags0 = runMaybeT $ do
     pdfile <- lift (findPackageDesc ".")
 #endif
     gpkg_descr <- lift $ PD.readPackageDescription verbosity pdfile
-    lbi <- lift $ Configure.getPersistBuildConfig Setup.defaultDistPref
+    lbi <- lift $ Configure.getPersistBuildConfig (fromMaybe Setup.defaultDistPref distPref)
 
     let programsConfig = defaultProgramConfiguration
     (comp, compPlatform, programsConfig') <- lift $
@@ -156,5 +159,5 @@ initBuildInfoDynFlags verbosity lbi bi clbi dflags0 = do
 #if MIN_VERSION_Cabal(1,20,0)
     rendered = CGHC.renderGhcOptions (LBI.compiler lbi) baseOpts
 #else
-    rendered = CGHC.renderGhcOptions (Compiler.compilerVersion (LBI.compiler lbi)) baseOpts  
+    rendered = CGHC.renderGhcOptions (Compiler.compilerVersion (LBI.compiler lbi)) baseOpts
 #endif
