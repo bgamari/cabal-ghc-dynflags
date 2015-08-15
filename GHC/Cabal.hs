@@ -13,15 +13,28 @@
 -- > main = runGhc (Just GHC.Paths.libdir) $ do
 -- >     dflags <- GHC.getSessionDynFlags
 -- >     -- Use default DynFlags if we aren't in a Cabal project
--- >     dflags' <- fromMaybe dflags <$> liftIO (initCabalDynFlags Verbosity.normal dflags)
+-- >     (dflags', _) <- fromMaybe dflags <$> liftIO (initCabalDynFlags Verbosity.normal dflags)
 -- >     GHC.setSessionDynFlags dflags'
 -- >
 -- >     -- Standard GHC API usage goes here
+--
+-- In addition to the 'DynFlags', 'initCabalDynFlags' also offers a variety of
+-- information about the current project in the form of 'CabalDetails'. Perhaps
+-- the most useful information offered is 'cdTargets', which lists the source files
+-- of the currently selected Cabal component.
+--
+-- For instance, to automatically bring project's module's into 
+--
+-- > (dflags', cd) <- maybe (dflags, Nothing) (\(a,b)->(a, Just b))
+-- >                  <$> liftIO (initCabalDynFlags (verbose args) dflags)
+-- > GHC.setSessionDynFlags dflags'
+-- > traverse (GHC.setTargets . cdTargets) cd
 --
 
 module GHC.Cabal (
       -- * Initializing GHC DynFlags for Cabal packages
       initCabalDynFlags
+    , CabalDetails(..)
     ) where
 
 import Control.Monad (guard, msum, mzero)
@@ -41,14 +54,32 @@ import qualified Distribution.Simple.Configure as Configure
 import qualified Distribution.Simple.Compiler as Compiler
 import qualified Distribution.Simple.GHC      as CGHC
 import qualified Distribution.Simple.Program.GHC as CGHC
+import qualified Distribution.ModuleName
+import Distribution.Text (display)
+import qualified GHC
 import DynFlags (DynFlags, parseDynamicFlagsCmdLine)
 import qualified SrcLoc
 
-data CabalDetails = CabalDetails { cdLocalBuildInfo :: LocalBuildInfo
-                                 }
+-- | Useful information about the current Cabal package
+data CabalDetails = CabalDetails
+    { -- | Cabal's 'PD.PackageDescription'
+      cdPackageDescription      :: PD.PackageDescription
+      -- | The 'LocalBuildInfo' being use to configure GHC
+    , cdLocalBuildInfo          :: LocalBuildInfo
+      -- | The name of the component being used
+    , cdComponentName           :: ComponentName
+      -- | The 'ComponentLocalBuildInfo' of the Cabal 'Component' being use to configure GHC
+    , cdComponentLocalBuildInfo :: ComponentLocalBuildInfo
+      -- | The GHC targets representing the sources of the current component.
+      -- What this means depends upon what type of component has been selected:
+      --
+      --    * library: libraries these are the library's exposed modules
+      --    * executable: the source of the executable's @Main@ source file
+    , cdTargets                 :: [GHC.Target]
+    }
 
 -- | Modify a set of 'DynFlags' to match what Cabal would produce.
-initCabalDynFlags :: Verbosity -> DynFlags -> IO (Maybe DynFlags)
+initCabalDynFlags :: Verbosity -> DynFlags -> IO (Maybe (DynFlags, CabalDetails))
 initCabalDynFlags verbosity dflags0 = runMaybeT $ do
     let warnNoCabal _err = lift (warn verbosity "Couldn't find cabal file") >> mzero
     pdfile <- either warnNoCabal pure =<< lift (findPackageDesc ".")
@@ -67,30 +98,47 @@ initCabalDynFlags verbosity dflags0 = runMaybeT $ do
                         Right (pd,_) -> pd
                         -- This shouldn't happen since we claim dependencies can always be satisfied
                         Left err     -> error "missing dependencies"
-    let comp :: Maybe (PD.BuildInfo, LBI.ComponentLocalBuildInfo)
+    let comp :: Maybe (PD.BuildInfo, ComponentName, [GHC.Target])
         comp = msum [libraryComp, executableComp]
 
         libraryComp = do
             lib <- PD.library pkg_descr
-            let bi = PD.libBuildInfo lib
+            let compName = CLibName
+                bi = PD.libBuildInfo lib
             guard $ PD.buildable bi
-            return (bi, getComponentLocalBuildInfo lbi CLibName)
+            let targets = map (\m -> GHC.Target (GHC.TargetModule $ toGhcModName m) False Nothing)
+                              (PD.exposedModules lib)
+            return (bi, compName, targets)
 
         executableComp = msum $ flip map (PD.executables pkg_descr) $ \exec->do
-            let bi = PD.buildInfo exec
+            let compName = LBI.CExeName $ PD.exeName exec
+                bi = PD.buildInfo exec
             guard $ PD.buildable bi
-            return (bi, getComponentLocalBuildInfo lbi (LBI.CExeName $ PD.exeName exec))
+            let targets = [GHC.Target (GHC.TargetFile (PD.modulePath exec) Nothing) False Nothing]
+            return (bi, compName, targets)
 
-    case comp of
-      Just (bi, clbi) -> lift $ initCabalDynFlags' verbosity lbi bi clbi dflags0
-      Nothing         -> do
-          lift $ warn verbosity $ "Found no buildable components in "++pdfile
-          mzero
+    let warnNoComps = do
+            lift $ warn verbosity $ "Found no buildable components in "++pdfile
+            mzero
+    (bi, compName, targets) <- maybe warnNoComps pure comp
+    let clbi = getComponentLocalBuildInfo lbi compName
 
-initCabalDynFlags' :: Verbosity -> LocalBuildInfo
-                   -> BuildInfo -> ComponentLocalBuildInfo
-                   -> DynFlags -> IO DynFlags
-initCabalDynFlags' verbosity lbi bi clbi dflags0 = do
+    dflags <- lift $ initBuildInfoDynFlags verbosity lbi bi clbi dflags0
+    let cd = CabalDetails { cdPackageDescription      = pkg_descr
+                          , cdLocalBuildInfo          = lbi
+                          , cdComponentName           = compName
+                          , cdComponentLocalBuildInfo = clbi
+                          , cdTargets                 = targets
+                          }
+    return (dflags, cd)
+
+toGhcModName :: Distribution.ModuleName.ModuleName -> GHC.ModuleName
+toGhcModName = GHC.mkModuleName . display
+
+initBuildInfoDynFlags :: Verbosity -> LocalBuildInfo
+                      -> BuildInfo -> ComponentLocalBuildInfo
+                      -> DynFlags -> IO DynFlags
+initBuildInfoDynFlags verbosity lbi bi clbi dflags0 = do
     debug verbosity $ "initCabalDynFlags': Flags = "++show rendered
     (dflags, leftovers, warnings) <- DynFlags.parseDynamicFlagsCmdLine dflags0 (map SrcLoc.noLoc rendered)
     putStrLn $ unlines $ map SrcLoc.unLoc warnings
