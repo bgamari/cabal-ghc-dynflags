@@ -24,7 +24,7 @@
 -- conjunction with 'componentTargets' to generate the GHC 'Target's
 -- defined by the component.
 --
--- For instance, to automatically bring project's modules into scope,
+-- For instance, to automatically bring the project's modules into scope,
 --
 -- > (dflags', cd) <- maybe (dflags, Nothing) (\(a,b)->(a, Just b))
 -- >                  <$> liftIO (initCabalDynFlags (verbose args) dflags)
