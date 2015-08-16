@@ -1,5 +1,5 @@
 name:                cabal-ghc-dynflags
-version:             0.1.0.1
+version:             1.0.0.0
 synopsis:            Conveniently configure GHC's dynamic flags for use with Cabal projects
 description:         One of the challenges of using the GHC API for external tooling
                      is handling integration with Cabal. This library provides a simple
