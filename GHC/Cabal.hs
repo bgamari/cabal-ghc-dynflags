@@ -1,4 +1,6 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE RecordWildCards #-}
+
 -- | One of the challenges of using the GHC API for external tooling
 -- is handling integration with Cabal. This library provides a simple
 -- interface for configuring GHC's 'DynFlags' as Cabal would have,
@@ -32,11 +34,19 @@
 -- > GHC.setSessionDynFlags dflags'
 -- > traverse (GHC.setTargets . componentTargets . cdComponent) cd
 --
+-- * Configuration
+--
+-- Cabal has many knobs. This package exposes a few of the more commonly-needed
+-- ones in 'Config', although in many cases you won't need them.
+--
 
 module GHC.Cabal (
       -- * Initializing GHC DynFlags for Cabal packages
       initCabalDynFlags
     , CabalDetails(..)
+      -- * Configuration
+    , Config(..)
+      -- * Discovering a project's modules
     , componentTargets
     ) where
 
@@ -44,6 +54,7 @@ import Control.Monad (guard, msum, mzero)
 import Control.Monad.Trans.Maybe (MaybeT, runMaybeT)
 import Control.Monad.Trans.Class
 import Data.Maybe (listToMaybe, fromMaybe)
+import System.Environment (lookupEnv)
 
 import Control.Applicative ((<|>))
 import Distribution.Verbosity
@@ -65,6 +76,10 @@ import qualified GHC
 import DynFlags (DynFlags, parseDynamicFlagsCmdLine)
 import qualified SrcLoc
 
+#if ! MIN_VERSION_Cabal(1,20,0)
+import System.IO.Error (catchIOError)
+#endif
+
 -- | Useful information about the current Cabal package
 data CabalDetails = CabalDetails
     { -- | Cabal's 'PD.PackageDescription'
@@ -77,20 +92,48 @@ data CabalDetails = CabalDetails
     , cdComponentLocalBuildInfo :: ComponentLocalBuildInfo
     }
 
--- | Modify a set of 'DynFlags' to match what Cabal would produce.
-initCabalDynFlags :: Verbosity
-                  -> Maybe FilePath -- ^ dist/ prefix (if overriding)
-                  -> DynFlags
-                  -> IO (Maybe (DynFlags, CabalDetails))
-initCabalDynFlags verbosity distPref dflags0 = runMaybeT $ do
+-- | Various configuration options that one may want to override.
+-- If not just use 'defaultConfig'.
+data Config = Config { -- | How verbose should we be?
+                       verbosity  :: Verbosity
+                       -- | @dist/@ prefix ('Nothing' for default)
+                     , distDir    :: Maybe FilePath
+                     }
+
+-- | A sane default configuration.
+defaultConfig :: Config
+defaultConfig = Config { verbosity = normal
+                       , distDir = Nothing
+                       }
+
+-- | Find the @dist/@ directory.
+getDistDir :: Config -> IO FilePath
+getDistDir (Config {..}) = do
+#if MIN_VERSION_Cabal(1,23,0)
+    findDistPrefOrDefault (maybe Noflag Flag $ distDir)
+#else
+    return $ fromMaybe Setup.defaultDistPref distDir
+#endif
+
+-- | Find the Cabal package description in the current directory (if any)
+findPackageDescription :: Config -> MaybeT IO FilePath
+findPackageDescription (Config {..}) = do
 #if MIN_VERSION_Cabal(1,20,0)
     let warnNoCabal _err = lift (warn verbosity "Couldn't find cabal file") >> mzero
-    pdfile <- either warnNoCabal return =<< lift (findPackageDesc ".")
+    either warnNoCabal return =<< lift (findPackageDesc ".")
 #else
-    pdfile <- lift (findPackageDesc ".")
+    MaybeT $ catchIOError (Just <$> findPackageDesc ".") (pure Nothing)
 #endif
+
+-- | Modify a set of 'DynFlags' to match what Cabal would produce.
+initCabalDynFlags :: Config
+                  -> DynFlags
+                  -> IO (Maybe (DynFlags, CabalDetails))
+initCabalDynFlags cfg@(Config {..}) dflags0 = runMaybeT $ do
+    pdfile <- findPackageDescription cfg
     gpkg_descr <- lift $ PD.readPackageDescription verbosity pdfile
-    lbi <- lift $ Configure.getPersistBuildConfig (fromMaybe Setup.defaultDistPref distPref)
+    dist <- lift $ getDistDir cfg
+    lbi <- lift $ Configure.getPersistBuildConfig dist
 
     let programsConfig = defaultProgramConfiguration
     (comp, compPlatform, programsConfig') <- lift $
