@@ -16,7 +16,8 @@
 -- > main = runGhc (Just GHC.Paths.libdir) $ do
 -- >     dflags <- GHC.getSessionDynFlags
 -- >     -- Use default DynFlags if we aren't in a Cabal project
--- >     (dflags', _) <- fromMaybe dflags <$> liftIO (initCabalDynFlags Verbosity.normal dflags)
+-- >     (dflags', _) <- fromMaybe (dflags, Nothing)
+-- >                     <$> liftIO (initCabalDynFlags defaultConfig dflags)
 -- >     GHC.setSessionDynFlags dflags'
 -- >
 -- >     -- Standard GHC API usage goes here
@@ -30,7 +31,7 @@
 -- For instance, to automatically bring the project's modules into scope,
 --
 -- > (dflags', cd) <- maybe (dflags, Nothing) (\(a,b)->(a, Just b))
--- >                  <$> liftIO (initCabalDynFlags (verbose args) dflags)
+-- >                  <$> liftIO (initCabalDynFlags defaultConfig dflags)
 -- > GHC.setSessionDynFlags dflags'
 -- > traverse (GHC.setTargets . componentTargets . cdComponent) cd
 --
